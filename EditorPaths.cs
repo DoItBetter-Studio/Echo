@@ -10,6 +10,5 @@ namespace Echo
 
 		public static string AssetsAudio => Path.Combine(AssetsRoot, "audio");
 		public static string DataAudio => Path.Combine(DataRoot, "audio");
-
 	}
 }

@@ -1,8 +1,8 @@
-﻿# Echo
+﻿# Glyphborn.Echo
 
 > Proprietary Software — DoItBetter Studio
 
-**Echo** is the audio engine component of the Glyphborn ecosystem.
+**Glyphborn.Echo** is the audio engine component of the Glyphborn ecosystem.
 
 Development began in August 2025 as part of DoItBetter Studio’s long-term effort to build a modular, deterministic game engine and editor suite.
 
@@ -10,7 +10,7 @@ Development began in August 2025 as part of DoItBetter Studio’s long-term effo
 
 ## Overview
 
-Echo is responsible for:
+Glyphborn.Echo is responsible for:
 
 - Audio playback and mixing
 - Sound effect management
@@ -19,7 +19,7 @@ Echo is responsible for:
 - Volume routing and balancing
 - Runtime audio state handling
 
-Echo defines how sound behaves within the engine while remaining independent of world structure, rendering, and gameplay logic.
+Glyphborn.Echo defines how sound behaves within the engine while remaining independent of world structure, rendering, and gameplay logic.
 
 ---
 
@@ -27,14 +27,14 @@ Echo defines how sound behaves within the engine while remaining independent of 
 
 The Glyphborn ecosystem is intentionally modular.
 
-Echo handles:
+Glyphborn.Echo handles:
 
 ✔ Audio playback  
 ✔ Music and loop control  
 ✔ Channel management  
 ✔ Runtime audio coordination  
 
-Echo does **not** handle:
+Glyphborn.Echo does **not** handle:
 
 ✖ Rendering  
 ✖ World or spatial data  
@@ -44,13 +44,13 @@ Echo does **not** handle:
 
 Audio logic is isolated to ensure clarity, testability, and clean dependency boundaries.
 
-Echo integrates with other systems but does not depend on them for core functionality.
+Glyphborn.Echo integrates with other systems but does not depend on them for core functionality.
 
 ---
 
 ## Design Principles
 
-Echo follows the engineering principles established by DoItBetter Studio:
+Glyphborn.Echo follows the engineering principles established by DoItBetter Studio:
 
 - **Deterministic Audio State** — Predictable behavior across runtime sessions  
 - **Modular Architecture** — Independent repository and versioning  
@@ -62,7 +62,7 @@ Echo follows the engineering principles established by DoItBetter Studio:
 
 ## Ecosystem Integration
 
-Echo integrates with:
+Glyphborn.Echo integrates with:
 
 - Atlas — World and spatial systems  
 - Mapper — Tooling and editor workflows  
@@ -74,7 +74,7 @@ Each component is developed independently to allow controlled iteration and long
 
 ## Project Status
 
-Echo is currently in active development.
+Glyphborn.Echo is currently in active development.
 
 The broader Glyphborn engine will eventually be rebranded and released as:
 

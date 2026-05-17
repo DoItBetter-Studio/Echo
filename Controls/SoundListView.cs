@@ -1,651 +1,608 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
-using System.Linq;
 using System.Windows.Forms;
-
-using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
 
 namespace Echo.Controls
 {
 	public class SoundListView : Control
 	{
-		const int ColName = 36;
-		const int ColDuration = 336;
-		const int ColChannels = 536;
-		const int ColSampleRate = 636;
-		const int TrimHandleHeight = 10;
-		const int LoopHandleHeight = 10;
+		// ---------------------------------------------------------------
+		// Layout constants (Maintained for column/scrolling offsets)
+		// ---------------------------------------------------------------
+		private const int ColName = 36;
+		private const int ColDuration = 336;
+		private const int ColChannels = 536;
+		private const int ColSampleRate = 636;
+		private const int RowHeight = 32;
+		private const int RowGap = 2;
+		private const int WaveHeight = 64;
+		private const int WaveOffsetY = 52;
+		private const int WaveMarginX = 10;
+		private const int TrimBandH = 10;
+		private const int LoopBandH = 10;
+		private const int GrabRadius = 6;
+		private const int HeaderHeight = 32;
 
-		private List<SoundItem> _items = new();
-		private int _scrollOffset;
+		private const int MarkerCapW = 10;
+		private const int MarkerCapH = 8;
+
+		// ---------------------------------------------------------------
+		// Colors — Extracted from Glyphborn Echo Dark Theme (WaveformRenderer)
+		// ---------------------------------------------------------------
+		private readonly Brush _bgBrush = new SolidBrush(Color.FromArgb(255, 22, 24, 28));
+		private readonly Brush _rowBrush1 = new SolidBrush(Color.FromArgb(255, 32, 38, 44));
+		private readonly Brush _rowBrush2 = new SolidBrush(Color.FromArgb(255, 26, 30, 35));
+		private readonly Color _colorTrim = Color.FromArgb(255, 255, 180, 60);
+		private readonly Color _colorLoop = Color.FromArgb(255, 60, 220, 220);
+		private readonly Brush _textMuted = new SolidBrush(Color.FromArgb(160, 160, 160));
+
+		// ---------------------------------------------------------------
+		// Items and selection
+		// ---------------------------------------------------------------
+		private readonly List<SoundItem> _items = new();
 		private int _selectedIndex = -1;
-		private Brush _brush1 = new SolidBrush(Color.FromArgb(60, 60, 65));
-		private Brush _brush2 = new SolidBrush(Color.FromArgb(45, 45, 48));
+		private int _scrollOffset = 0;
 
-		private WaveOutEvent output = new WaveOutEvent();
+		// ---------------------------------------------------------------
+		// Drag state
+		// ---------------------------------------------------------------
+		private DragMode _dragMode = DragMode.None;
+		private SoundItem? _dragItem = null;
+		private Rectangle _dragWaveRect;
 
-		private DragMode dragMode = DragMode.None;
-		private SoundItem dragItem;
+		// ---------------------------------------------------------------
+		// Playback
+		// ---------------------------------------------------------------
+		private readonly WinMMAudioPlayer _player = new WinMMAudioPlayer();
+		private SoundItem? _playingItem = null;
 
-		private Rectangle waveformRect;
-		private Rectangle trimStartHandle;
-		private Rectangle trimEndHandle;
-		private Rectangle loopStartHandle;
-		private Rectangle loopEndHandle;
-		private Rectangle loopToggleRect;
+		// ---------------------------------------------------------------
+		// Batch export flash
+		// ---------------------------------------------------------------
+		private bool _batchFlash = false;
+		private readonly System.Windows.Forms.Timer _flashTimer = new System.Windows.Forms.Timer { Interval = 1000 };
 
+		// ---------------------------------------------------------------
+		// Constructor
+		// ---------------------------------------------------------------
 		public SoundListView()
 		{
+			DoubleBuffered = true;
+			Font = new Font("Consolas", 9f);
 			LoadAudio();
 
-			DoubleBuffered = true;
+			_player.PlaybackStopped += (_, __) =>
+			{
+				if (_playingItem != null)
+					_playingItem.IsPlaying = false;
+				_playingItem = null;
+				Invalidate();
+			};
+
+			_flashTimer.Tick += (_, __) =>
+			{
+				_batchFlash = false;
+				_flashTimer.Stop();
+				Invalidate();
+			};
 		}
 
-		protected override void OnMouseDown(MouseEventArgs e)
+		// ---------------------------------------------------------------
+		// Paint
+		// ---------------------------------------------------------------
+		protected override void OnPaint(PaintEventArgs e)
 		{
-			int y = -_scrollOffset + 32;
+			var g = e.Graphics;
+			g.SmoothingMode = SmoothingMode.AntiAlias;
+
+			// Clear background with editor standard base tone
+			g.FillRectangle(_bgBrush, ClientRectangle);
+
+			// Column headers
+			g.DrawString("Name", Font, _textMuted, ColName, 8);
+			g.DrawString("Duration", Font, _textMuted, ColDuration, 8);
+			g.DrawString("Channels", Font, _textMuted, ColChannels, 8);
+			g.DrawString("Sample Rate", Font, _textMuted, ColSampleRate, 8);
+
+			// Batch export button — top-right of header row
+			var batchRect = GetBatchExportRect();
+			using (var batchBrush = new SolidBrush(_batchFlash ? Color.FromArgb(60, 180, 80) : Color.FromArgb(50, 50, 55)))
+				g.FillRectangle(batchBrush, batchRect);
+			g.DrawString(_batchFlash ? "Exported!" : "Export All", Font,
+				_batchFlash ? Brushes.White : Brushes.LightGray,
+				batchRect.X + 6, batchRect.Y + 4);
+
+			int y = HeaderHeight - _scrollOffset;
 
 			for (int i = 0; i < _items.Count; i++)
 			{
 				var item = _items[i];
-				int height = (i == _selectedIndex) ? item.ExpandedHeight : item.Collapsed;
+				bool sel = i == _selectedIndex;
+				int height = sel ? item.ExpandedHeight : item.CollapsedHeight;
 
-				// Header click (expand/collapse)
-				if (e.Y >= y && e.Y <= y + 32 && e.X >= 32 && e.X <= Width)
+				DrawItem(g, item, new Rectangle(0, y, Width, height), sel, i);
+
+				y += height + RowGap;
+			}
+		}
+
+		private void DrawItem(Graphics g, SoundItem item, Rectangle rect, bool isSelected, int index)
+		{
+			// Row background matching single view editor container bases
+			g.FillRectangle((index % 2 == 0) ? _rowBrush1 : _rowBrush2, rect);
+
+			// Play/stop button - flat minimalist styling matching theme
+			g.FillEllipse(Brushes.WhiteSmoke, rect.X + 4, rect.Y + 4, 24, 24);
+			if (item.IsPlaying)
+				DrawStopIcon(g, new Rectangle(rect.X + 4, rect.Y + 4, 24, 24));
+			else
+				DrawPlayIcon(g, new Rectangle(rect.X + 4, rect.Y + 4, 24, 24));
+
+			// Metadata Columns text colors
+			var doc = item.Document;
+			double duration = (double)doc.Samples.Length / doc.SampleRate;
+			int minutes = (int)(duration / 60);
+			double seconds = duration % 60;
+
+			g.DrawString(item.Name, Font, Brushes.White, rect.X + ColName, rect.Y + 8);
+			g.DrawString($"{minutes:D2}:{seconds:00.000}", Font, Brushes.White, rect.X + ColDuration, rect.Y + 8);
+			g.DrawString("1", Font, Brushes.White, rect.X + ColChannels, rect.Y + 8);
+			g.DrawString(doc.SampleRate.ToString(), Font, Brushes.White, rect.X + ColSampleRate, rect.Y + 8);
+
+			if (!isSelected) return;
+
+			// ---------------------------------------------------------------
+			// Expanded waveform area via WaveformRenderer
+			// ---------------------------------------------------------------
+			var waveRect = GetWaveRect(rect);
+			var trimBand = new Rectangle(waveRect.Left, waveRect.Top - TrimBandH, waveRect.Width, TrimBandH);
+			var loopBand = new Rectangle(waveRect.Left, waveRect.Bottom, waveRect.Width, LoopBandH);
+
+			// Section title text formatting
+			g.DrawString("Waveform Visualizer", Font, _textMuted, waveRect.X, waveRect.Y - 20);
+
+			// Check and regenerate cache
+			if (item.CachedWaveform == null || item.CachedWaveform.Width != waveRect.Width || item.CachedWaveform.Height != waveRect.Height)
+			{
+				item.CachedWaveform?.Dispose();
+				item.CachedWaveform = WaveformRenderer.Render(item.Document, waveRect.Width, waveRect.Height);
+			}
+
+			// Draw full-bleed bitmap layer directly seamlessly matching single editor panel
+			g.DrawImage(item.CachedWaveform, waveRect.X, waveRect.Y);
+
+			// Draw stylized vector Trim marker caps over control handle boundaries
+			int trimStartX = SampleToX(doc, doc.TrimStart, waveRect);
+			int trimEndX = SampleToX(doc, doc.TrimEnd, waveRect);
+
+			DrawCapMarker(g, trimStartX, trimBand.Top, _colorTrim, capUp: true);
+			DrawCapMarker(g, trimEndX, trimBand.Top, _colorTrim, capUp: true);
+
+			// Draw stylized vector Loop marker caps ONLY if looping is active
+			bool looping = doc.LoopEnabled;
+			if (looping)
+			{
+				int loopStartX = SampleToX(doc, doc.LoopStart, waveRect);
+				int loopEndX = SampleToX(doc, doc.LoopEnd, waveRect);
+
+				DrawCapMarker(g, loopStartX, loopBand.Top, _colorLoop, capUp: false);
+				DrawCapMarker(g, loopEndX, loopBand.Top, _colorLoop, capUp: false);
+			}
+
+			// ---------------------------------------------------------------
+			// Unbound Persistent Active Status Footer Layout (Split Rendering)
+			// ---------------------------------------------------------------
+			double trimDuration = (double)(doc.TrimEnd - doc.TrimStart) / doc.SampleRate;
+
+			Brush labelBrush = Brushes.MediumSpringGreen;
+			Brush valueBrush = Brushes.WhiteSmoke;
+			Brush pipeBrush = Brushes.DimGray;
+			Brush loopStateBrush = looping ? Brushes.MediumSpringGreen : Brushes.Firebrick;
+
+			float currentX = rect.X + WaveMarginX;
+			float footerY = waveRect.Bottom + LoopBandH + 2;
+
+			void DrawTextSegment(string text, Brush brush)
+			{
+				g.DrawString(text, Font, brush, currentX, footerY);
+				currentX += g.MeasureString(text, Font).Width;
+			}
+
+			// 1. Loop prefix and conditional state coloring
+			DrawTextSegment("Loop: ", labelBrush);
+			DrawTextSegment(looping ? "Active" : "Disabled", loopStateBrush);
+
+			// 2. Trim Info Block
+			DrawTextSegment("    |    ", pipeBrush);
+			DrawTextSegment("Trim: ", labelBrush);
+			DrawTextSegment($"{doc.TrimStart}–{doc.TrimEnd}", valueBrush);
+
+			// 3. Loop Points Block
+			DrawTextSegment("    |    ", pipeBrush);
+			DrawTextSegment("Loop pts: ", labelBrush);
+			DrawTextSegment($"{doc.LoopStart}–{doc.LoopEnd}", valueBrush);
+
+			// 4. Duration Block
+			DrawTextSegment("    |    ", pipeBrush);
+			DrawTextSegment("Duration: ", labelBrush);
+			DrawTextSegment($"{trimDuration:F3}s", valueBrush);
+
+			// Per-item export button — right side of footer
+			var exportRect = GetExportButtonRect(rect, waveRect);
+			using (var exportBrush = new SolidBrush(Color.FromArgb(50, 50, 55)))
+				g.FillRectangle(exportBrush, exportRect);
+			g.DrawString("Export", Font, Brushes.LightGray, exportRect.X + 6, exportRect.Y + 2);
+		}
+
+		private static void DrawCapMarker(Graphics g, int x, int y, Color color, bool capUp)
+		{
+			using var brush = new SolidBrush(color);
+			int dir = capUp ? 1 : -1;
+			int baseOffset = capUp ? 0 : LoopBandH;
+
+			Point[] points = {
+				new Point(x, y + baseOffset),
+				new Point(x + MarkerCapW / 2, y + baseOffset + (dir * MarkerCapH)),
+				new Point(x - MarkerCapW / 2, y + baseOffset + (dir * MarkerCapH))
+			};
+			g.FillPolygon(brush, points);
+		}
+
+		// ---------------------------------------------------------------
+		// Mouse
+		// ---------------------------------------------------------------
+		protected override void OnMouseDown(MouseEventArgs e)
+		{
+			// Batch export button in header
+			if (GetBatchExportRect().Contains(e.Location))
+			{
+				BatchExport();
+				return;
+			}
+
+			int y = HeaderHeight - _scrollOffset;
+
+			for (int i = 0; i < _items.Count; i++)
+			{
+				var item = _items[i];
+				bool sel = i == _selectedIndex;
+				int height = sel ? item.ExpandedHeight : item.CollapsedHeight;
+				var rect = new Rectangle(0, y, Width, height);
+
+				var playBtn = new Rectangle(rect.X + 4, rect.Y + 4, 24, 24);
+				if (playBtn.Contains(e.Location))
+				{
+					TogglePlayback(item);
+					Invalidate();
+					return;
+				}
+
+				var header = new Rectangle(rect.X + ColName, rect.Y, Width - ColName, RowHeight);
+				if (header.Contains(e.Location))
 				{
 					_selectedIndex = (i == _selectedIndex) ? -1 : i;
 					AutoScrollToItem(i);
 					Invalidate();
-					break;
-				}
-				// Play button click
-				else if (e.Y >= y && e.Y <= y + 32 && e.X >= 4 && e.X <= 28)
-				{
-					item.isPlaying = !item.isPlaying;
-					if (item.isPlaying)
-						PreviewSound(item);
-					else
-						StopAllSounds();
-					Invalidate();
-					break;
+					return;
 				}
 
-				// Only handle waveform interactions for the selected item
-				if (i == _selectedIndex)
+				if (sel)
 				{
-					// Recalculate rectangles for THIS item
-					var waveRect = new Rectangle(10, y + 52, Width - 20, 64);
-					var trimBand = new Rectangle(waveRect.Left, waveRect.Top - TrimHandleHeight, waveRect.Width, TrimHandleHeight);
-					var loopBand = new Rectangle(waveRect.Left, waveRect.Bottom, waveRect.Width, LoopHandleHeight);
-
-					float ts = item.EditorDocument.TrimStart;
-					float te = item.EditorDocument.TrimEnd;
-
-					int trimStartX = waveRect.Left + (int) (ts * waveRect.Width);
-					int trimEndX = waveRect.Left + (int) (te * waveRect.Width);
-
-					var trimStartRect = new Rectangle(trimStartX - 4, trimBand.Top, 8, TrimHandleHeight);
-					var trimEndRect = new Rectangle(trimEndX - 4, trimBand.Top, 8, TrimHandleHeight);
+					var waveRect = GetWaveRect(rect);
+					var trimBand = new Rectangle(waveRect.Left, waveRect.Top - TrimBandH, waveRect.Width, TrimBandH);
+					var loopBand = new Rectangle(waveRect.Left, waveRect.Bottom, waveRect.Width, LoopBandH);
 
 					// Loop toggle
-					var loopToggle = new Rectangle(10, y + 120, 100, 18);
+					var loopToggle = new Rectangle(rect.X + WaveMarginX, waveRect.Bottom + LoopBandH + 2, 100, 16);
 					if (loopToggle.Contains(e.Location))
 					{
-						item.EditorDocument.Flags ^= AudioFlags.Loop;
-						Serializer.Write(item.Name, item.EditorDocument);
+						Commands.ToggleLoop(item.Document);
+						Commands.Save(item.Document, item.Name);
+						item.ClearCache();
 						Invalidate();
 						return;
 					}
 
-					// Trim handles
-					if (trimStartRect.Contains(e.Location))
+					// Per-item export button
+					var exportBtn = GetExportButtonRect(rect, waveRect);
+					if (exportBtn.Contains(e.Location))
 					{
-						dragMode = DragMode.TrimStart;
-						dragItem = item;
-						waveformRect = waveRect; // Store for OnMouseMove
-						return;
-					}
-					else if (trimEndRect.Contains(e.Location))
-					{
-						dragMode = DragMode.TrimEnd;
-						dragItem = item;
-						waveformRect = waveRect;
+						ExportSingle(item);
 						return;
 					}
 
-					// Loop handles (only if looping enabled)
-					if (item.EditorDocument.Flags.HasFlag(AudioFlags.Loop))
+					int trimStartX = SampleToX(item.Document, item.Document.TrimStart, waveRect);
+					int trimEndX = SampleToX(item.Document, item.Document.TrimEnd, waveRect);
+
+					if (Math.Abs(e.X - trimStartX) <= GrabRadius && trimBand.Top <= e.Y && e.Y <= trimBand.Bottom)
 					{
-						float ls = item.EditorDocument.LoopStart;
-						float le = item.EditorDocument.LoopEnd;
+						_dragMode = DragMode.TrimStart; _dragItem = item; _dragWaveRect = waveRect; return;
+					}
+					if (Math.Abs(e.X - trimEndX) <= GrabRadius && trimBand.Top <= e.Y && e.Y <= trimBand.Bottom)
+					{
+						_dragMode = DragMode.TrimEnd; _dragItem = item; _dragWaveRect = waveRect; return;
+					}
 
-						int trimmedWidth = trimEndX - trimStartX;
-						int loopStartX = trimStartX + (int) (ls * trimmedWidth);
-						int loopEndX = trimStartX + (int) (le * trimmedWidth);
+					if (item.Document.LoopEnabled)
+					{
+						int loopStartX = SampleToX(item.Document, item.Document.LoopStart, waveRect);
+						int loopEndX = SampleToX(item.Document, item.Document.LoopEnd, waveRect);
 
-						var loopStartRect = new Rectangle(loopStartX - 4, loopBand.Top, 8, LoopHandleHeight);
-						var loopEndRect = new Rectangle(loopEndX - 4, loopBand.Top, 8, LoopHandleHeight);
-
-						if (loopStartRect.Contains(e.Location))
+						if (Math.Abs(e.X - loopStartX) <= GrabRadius && loopBand.Top <= e.Y && e.Y <= loopBand.Bottom)
 						{
-							dragMode = DragMode.LoopStart;
-							dragItem = item;
-							waveformRect = waveRect;
-							return;
+							_dragMode = DragMode.LoopStart; _dragItem = item; _dragWaveRect = waveRect; return;
 						}
-						else if (loopEndRect.Contains(e.Location))
+						if (Math.Abs(e.X - loopEndX) <= GrabRadius && loopBand.Top <= e.Y && e.Y <= loopBand.Bottom)
 						{
-							dragMode = DragMode.LoopEnd;
-							dragItem = item;
-							waveformRect = waveRect;
-							return;
+							_dragMode = DragMode.LoopEnd; _dragItem = item; _dragWaveRect = waveRect; return;
 						}
 					}
 				}
 
-				y += height + 2;
+				y += height + RowGap;
 			}
-		}
-
-		protected override void OnMouseWheel(MouseEventArgs e)
-		{
-			_scrollOffset -= e.Delta / 120 * 20; // Smoother scrolling
-
-			int totalHeight = 0;
-			for (int i = 0; i < _items.Count; i++)
-				totalHeight += (i == _selectedIndex) ? _items[i].ExpandedHeight : _items[i].Collapsed;
-
-			int maxScroll = Math.Max(0, totalHeight - ClientSize.Height);
-			_scrollOffset = Math.Max(0, Math.Min(_scrollOffset, maxScroll));
-
-			Invalidate();
 		}
 
 		protected override void OnMouseMove(MouseEventArgs e)
 		{
-			if (dragMode == DragMode.None || dragItem == null)
-				return;
+			if (_dragMode == DragMode.None || _dragItem == null) return;
 
-			var doc = dragItem.EditorDocument;
+			var doc = _dragItem.Document;
+			int sample = XToSample(doc, e.X, _dragWaveRect);
 
-			float t = (float) (e.X - waveformRect.Left) / waveformRect.Width;
-			t = Math.Clamp(t, 0f, 1f);
-
-			switch (dragMode)
+			switch (_dragMode)
 			{
 				case DragMode.TrimStart:
-					doc.TrimStart = Math.Min(t, doc.TrimEnd - 0.001f);
+					Commands.SetMarker(doc, MarkerKind.TrimStart, sample);
 					break;
-
 				case DragMode.TrimEnd:
-					doc.TrimEnd = Math.Max(t, doc.TrimStart + 0.001f);
+					Commands.SetMarker(doc, MarkerKind.TrimEnd, sample);
 					break;
-
 				case DragMode.LoopStart:
+					Commands.SetMarker(doc, MarkerKind.LoopStart, sample);
+					break;
 				case DragMode.LoopEnd:
-
-					// For loop handles, remap t from trimmed region
-					float trimmedWidth = doc.TrimEnd - doc.TrimStart;
-					float tInTrimmedRegion = (t - doc.TrimStart) / trimmedWidth;
-					tInTrimmedRegion = Math.Clamp(tInTrimmedRegion, 0f, 1f);
-
-					if (dragMode == DragMode.LoopStart)
-						doc.LoopStart = Math.Min(tInTrimmedRegion, doc.LoopEnd - 0.001f);
-					else
-						doc.LoopEnd = Math.Max(tInTrimmedRegion, doc.LoopStart + 0.001f);
+					Commands.SetMarker(doc, MarkerKind.LoopEnd, sample);
 					break;
 			}
 
+			_dragItem.ClearCache();
 			Invalidate();
 		}
 
 		protected override void OnMouseUp(MouseEventArgs e)
 		{
-			if (dragItem != null)
-			{
-				Serializer.Write(dragItem.Name, dragItem.EditorDocument);
-			}
+			if (_dragItem != null)
+				Commands.Save(_dragItem.Document, _dragItem.Name);
 
-			dragMode = DragMode.None;
-			dragItem = null;
+			_dragMode = DragMode.None;
+			_dragItem = null;
 		}
 
-		protected override void OnPaint(PaintEventArgs e)
+		protected override void OnMouseWheel(MouseEventArgs e)
 		{
-			var graphics = e.Graphics;
-
-			if (_items.Count == 0)
-				return;
-
-			int y = -_scrollOffset;
-
-			graphics.DrawString("Name", Font, Brushes.WhiteSmoke, new Point(ColName, 8));
-			graphics.DrawString("Duration", Font, Brushes.WhiteSmoke, new Point(ColDuration, 8));
-			graphics.DrawString("Channels", Font, Brushes.WhiteSmoke, new Point(ColChannels, 8));
-			graphics.DrawString("Sample Rate", Font, Brushes.WhiteSmoke, new Point(ColSampleRate, 8));
-
-			y += 32;
-
-			for (int i = 0; i < _items.Count; i++)
-			{
-				var item = _items[i];
-				int height = (i == _selectedIndex) ? item.ExpandedHeight : item.Collapsed;
-
-				DrawItem(e.Graphics, item, new Rectangle(0, y, Width, height), i == _selectedIndex, i);
-
-				y += height + 2;
-			}
+			_scrollOffset -= e.Delta / 120 * 20;
+			_scrollOffset = Math.Clamp(_scrollOffset, 0, Math.Max(0, TotalHeight() - ClientSize.Height));
+			Invalidate();
 		}
 
-		private void DrawItem(Graphics graphics, SoundItem item, Rectangle rectangle, bool isSelected, int index)
+		// ---------------------------------------------------------------
+		// Playback
+		// ---------------------------------------------------------------
+		private void TogglePlayback(SoundItem item)
 		{
-
-			if ((index % 2) == 0)
+			if (item.IsPlaying)
 			{
-				graphics.FillRectangle(_brush1, rectangle);
+				_player.Stop();
+				item.IsPlaying = false;
+				_playingItem = null;
 			}
 			else
 			{
-				graphics.FillRectangle(_brush2, rectangle);
-			}
-
-			graphics.FillEllipse(Brushes.White, new Rectangle(rectangle.X + 4, rectangle.Y + 4, 24, 24));
-
-			if (!item.isPlaying)
-			{
-				DrawPlayIcon(graphics, new Rectangle(rectangle.X + 4, rectangle.Y + 4, 24, 24));
-			}
-			else
-			{
-				DrawStopIcon(graphics, new Rectangle(rectangle.X + 4, rectangle.Y + 4, 24, 24));
-			}
-
-			graphics.DrawString(item.Name, Font, Brushes.WhiteSmoke, new Point(rectangle.X + ColName, rectangle.Y + 8));
-			graphics.DrawString(item.Duration.ToString(@"mm\:ss\.fff"), Font, Brushes.WhiteSmoke, new Point(rectangle.X + ColDuration, rectangle.Y + 8));
-			graphics.DrawString(item.Channels.ToString(), Font, Brushes.WhiteSmoke, new Point(rectangle.X + ColChannels, rectangle.Y + 8));
-			graphics.DrawString(item.SampleRate.ToString(), Font, Brushes.WhiteSmoke, new Point(rectangle.X + ColSampleRate, rectangle.Y + 8));
-
-			if (isSelected)
-			{
-				waveformRect = new Rectangle(rectangle.X + 10, rectangle.Y + 52, rectangle.Width - 20, 64);
-
-				Rectangle trimBand = new Rectangle(waveformRect.Left, waveformRect.Top - TrimHandleHeight, waveformRect.Width, TrimHandleHeight);
-				Rectangle loopBand = new Rectangle(waveformRect.Left, waveformRect.Bottom, waveformRect.Width, LoopHandleHeight);
-
-				graphics.DrawString("Waveform", Font, Brushes.White, new RectangleF(waveformRect.X, waveformRect.Y - 20, waveformRect.Width, waveformRect.Height));
-
-				graphics.FillRectangle(Brushes.DarkSlateGray, waveformRect);
-
-				DrawWaveform(graphics, waveformRect, _items[index].Waveform);
-
-				float ts = item.EditorDocument.TrimStart;
-				float te = item.EditorDocument.TrimEnd;
-
-				int x0 = waveformRect.Left;
-				int x1 = waveformRect.Right;
-
-				int trimStartX	= x0 + (int) (ts * waveformRect.Width);
-				int trimEndX	= x0 + (int) (te * waveformRect.Width);
-
-				trimStartHandle = new Rectangle(trimStartX - 4, trimBand.Top, 8, TrimHandleHeight);
-				trimEndHandle	= new Rectangle(trimEndX - 4, trimBand.Top, 8, TrimHandleHeight);
-
-				float ls = item.EditorDocument.LoopStart;
-				float le = item.EditorDocument.LoopEnd;
-
-				int trimmedWidth = trimEndX - trimStartX;
-
-				int loopStartX	= trimStartX + (int) (ls * trimmedWidth);
-				int loopEndX	= trimStartX + (int) (le * trimmedWidth);
-
-				loopStartHandle = new Rectangle(loopStartX - 4, loopBand.Top, 8, LoopHandleHeight);
-				loopEndHandle = new Rectangle(loopEndX - 4, loopBand.Top, 8, LoopHandleHeight);
-
-				graphics.FillRectangle(Brushes.Orange, trimStartHandle);
-				graphics.FillRectangle(Brushes.Orange, trimEndHandle);
-
-				if (item.EditorDocument.Flags.HasFlag(AudioFlags.Loop))
+				if (_playingItem != null)
 				{
-					graphics.FillRectangle(Brushes.Cyan, loopStartHandle);
-					graphics.FillRectangle(Brushes.Cyan, loopEndHandle);
+					_player.Stop();
+					_playingItem.IsPlaying = false;
 				}
 
-				string loopText = item.EditorDocument.Flags.HasFlag(AudioFlags.Loop) ? "Loop: On" : "Loop: Off";
-
-				Brush loopBrush = item.EditorDocument.Flags.HasFlag(AudioFlags.Loop) ? Brushes.LightGreen : Brushes.Gray;
-
-				loopToggleRect = new Rectangle(rectangle.X + 10, rectangle.Y + 120, 100, 18);
-
-				graphics.DrawString(loopText, Font, loopBrush, loopToggleRect.Location);
+				item.IsPlaying = true;
+				_playingItem = item;
+				_player.Play(item.Document);
 			}
 		}
 
-		private void AutoScrollToItem(int index)
+		// ---------------------------------------------------------------
+		// Export
+		// ---------------------------------------------------------------
+		private void ExportSingle(SoundItem item)
 		{
-			int y = 0;
-			for (int i = 0; i < index; i++)
-				y += _items[i].Collapsed + 2;
-
-			int expandHeight = _items[index].ExpandedHeight;
-			int viewHeight = this.ClientSize.Height;
-
-			if (y + expandHeight > _scrollOffset + viewHeight)
-				_scrollOffset = (y + expandHeight) - viewHeight;
-
-			if (y < _scrollOffset)
-				_scrollOffset = y;
-
-			if (_scrollOffset < 0)
-				_scrollOffset = 0;
+			Directory.CreateDirectory(EditorPaths.DataAudio);
+			string outPath = Path.Combine(EditorPaths.DataAudio, $"{item.Name}.gbaud");
+			Commands.Export(item.Document, outPath);
 		}
 
+		private void BatchExport()
+		{
+			Directory.CreateDirectory(EditorPaths.DataAudio);
+			foreach (var item in _items)
+			{
+				string outPath = Path.Combine(EditorPaths.DataAudio, $"{item.Name}.gbaud");
+				Commands.Export(item.Document, outPath);
+			}
+
+			_batchFlash = true;
+			_flashTimer.Stop();
+			_flashTimer.Start();
+			Invalidate();
+		}
+
+		// ---------------------------------------------------------------
+		// Rect helpers
+		// ---------------------------------------------------------------
+		private Rectangle GetBatchExportRect() =>
+			new Rectangle(Width - 90, 4, 82, 22);
+
+		private static Rectangle GetExportButtonRect(Rectangle itemRect, Rectangle waveRect) =>
+			new Rectangle(itemRect.Right - 70, waveRect.Bottom + LoopBandH + 2, 62, 16);
+
+		// ---------------------------------------------------------------
+		// Load audio from assets/audio/
+		// ---------------------------------------------------------------
 		private void LoadAudio()
 		{
 			if (!Directory.Exists(EditorPaths.AssetsAudio))
 				Directory.CreateDirectory(EditorPaths.AssetsAudio);
 
-			var audioExtensions = new[] { ".wav", ".mp3", ".ogg", ".flac", ".aiff", ".m4a" };
+			var wavExtensions = new[] { ".wav" };
 
 			foreach (var f in Directory.EnumerateFiles(EditorPaths.AssetsAudio))
 			{
 				string ext = Path.GetExtension(f).ToLowerInvariant();
-
-				// Skip non-audio files (including .gbaud)
-				if (!audioExtensions.Contains(ext))
-					continue;
+				if (Array.IndexOf(wavExtensions, ext) < 0) continue;
 
 				try
 				{
-					using var reader = new AudioFileReader(f);
-
 					string baseName = Path.GetFileNameWithoutExtension(f);
-
-					AudioEditorDocument editorDoc = null;
+					AudioDocument doc;
 					try
 					{
-						editorDoc = Serializer.Read(baseName);
+						doc = Serializer.Read(baseName);
 					}
 					catch
 					{
-						editorDoc = new AudioEditorDocument
-						{
-							SourcePath = f,
-							Flags = AudioFlags.None,
-							TrimStart = 0.0f,
-							TrimEnd = 1.0f,
-							LoopStart = 0.0f,
-							LoopEnd = 1.0f
-						};
+						doc = new AudioDocument();
+						Commands.LoadWav(doc, f);
 					}
 
 					_items.Add(new SoundItem
 					{
-						SourcePath = f,
 						Name = baseName,
-						Duration = reader.TotalTime,
-						SampleRate = reader.WaveFormat.SampleRate,
-						Channels = reader.WaveFormat.Channels,
-						Waveform = GenerateWaveform(f, 4096),
-						EditorDocument = editorDoc
+						Document = doc
 					});
 				}
 				catch (Exception ex)
 				{
-					Console.WriteLine($"Failed to load {f}: {ex.Message}");
+					Console.WriteLine($"Echo: failed to load {f}: {ex.Message}");
 				}
 			}
 		}
 
-		private void DrawPlayIcon(Graphics g, Rectangle bounds)
+		// ---------------------------------------------------------------
+		// Coordinate helpers
+		// ---------------------------------------------------------------
+		private static Rectangle GetWaveRect(Rectangle itemRect) =>
+			new Rectangle(itemRect.X + WaveMarginX, itemRect.Y + WaveOffsetY, itemRect.Width - WaveMarginX * 2, WaveHeight);
+
+		private static int SampleToX(AudioDocument doc, int sample, Rectangle waveRect)
+		{
+			if (doc.Samples.Length <= 1) return waveRect.Left;
+			double ratio = (double)sample / (doc.Samples.Length - 1);
+			return waveRect.Left + (int)(ratio * waveRect.Width);
+		}
+
+		private static int XToSample(AudioDocument doc, int x, Rectangle waveRect)
+		{
+			if (waveRect.Width <= 0) return 0;
+			double t = (double)(x - waveRect.Left) / waveRect.Width;
+			t = Math.Clamp(t, 0.0, 1.0);
+			return (int)(t * (doc.Samples.Length - 1));
+		}
+
+		// ---------------------------------------------------------------
+		// Scroll helpers
+		// ---------------------------------------------------------------
+		private int TotalHeight()
+		{
+			int total = HeaderHeight;
+			for (int i = 0; i < _items.Count; i++)
+				total += ((i == _selectedIndex) ? _items[i].ExpandedHeight : _items[i].CollapsedHeight) + RowGap;
+			return total;
+		}
+
+		private void AutoScrollToItem(int index)
+		{
+			int y = HeaderHeight;
+			for (int i = 0; i < index; i++)
+				y += ((i == _selectedIndex) ? _items[i].ExpandedHeight : _items[i].CollapsedHeight) + RowGap;
+
+			int expandH = _items[index].ExpandedHeight;
+			int viewH = ClientSize.Height;
+
+			if (y + expandH > _scrollOffset + viewH)
+				_scrollOffset = y + expandH - viewH;
+			if (y < _scrollOffset)
+				_scrollOffset = y;
+			_scrollOffset = Math.Max(0, _scrollOffset);
+		}
+
+		// ---------------------------------------------------------------
+		// Icons
+		// ---------------------------------------------------------------
+		private static void DrawPlayIcon(Graphics g, Rectangle bounds)
 		{
 			int cx = bounds.X + bounds.Width / 2;
 			int cy = bounds.Y + bounds.Height / 2;
+			int sz = bounds.Width / 3;
 
-			int size = bounds.Width / 3;
-
-			Point[] triangle =
+			g.FillPolygon(Brushes.DarkSlateGray, new Point[]
 			{
-				new Point(cx - size / 2, cy - size),
-				new Point(cx - size / 2, cy + size),
-				new Point(cx + size,     cy)
-			};
-
-			g.FillPolygon(Brushes.Black, triangle);
+				new Point(cx - sz / 2, cy - sz),
+				new Point(cx - sz / 2, cy + sz),
+				new Point(cx + sz,     cy),
+			});
 		}
 
-		private void DrawStopIcon(Graphics g, Rectangle bounds)
+		private static void DrawStopIcon(Graphics g, Rectangle bounds)
 		{
-			int size = bounds.Width / 3;
-			int x = bounds.X + (bounds.Width - size) / 2;
-			int y = bounds.Y + (bounds.Height - size) / 2;
-
-			g.FillRectangle(Brushes.Black, new Rectangle(x, y, size, size));
+			int sz = bounds.Width / 3;
+			int x = bounds.X + (bounds.Width - sz) / 2;
+			int y = bounds.Y + (bounds.Height - sz) / 2;
+			g.FillRectangle(Brushes.DarkSlateGray, x, y, sz, sz);
 		}
 
-		void PreviewSound(SoundItem item)
+		// ---------------------------------------------------------------
+		// Cleanup
+		// ---------------------------------------------------------------
+		protected override void Dispose(bool disposing)
 		{
-			StopAllSounds();
-
-			var reader = new AudioFileReader(item.SourcePath);
-			ISampleProvider source = reader;
-
-			if (reader.WaveFormat.Channels == 2)
+			if (disposing)
 			{
-				source = new StereoToMonoSampleProvider(source)
-				{
-					LeftVolume = 0.5f,
-					RightVolume = 0.5f
-				};
+				_player.Dispose();
+				_flashTimer.Dispose();
+				_bgBrush.Dispose();
+				_rowBrush1.Dispose();
+				_rowBrush2.Dispose();
+				_textMuted.Dispose();
+
+				foreach (var item in _items)
+					item.CachedWaveform?.Dispose();
 			}
-			else if (reader.WaveFormat.Channels > 2)
-			{
-				source = new MultiChannelToMonoSampleProvider(source);
-			}
-
-			source = ApplyTrim(source, item.EditorDocument, reader.TotalTime);
-
-			if (item.EditorDocument.Flags.HasFlag(AudioFlags.Loop))
-			{
-				source = new CachedLoopSampleProvider(source, item.EditorDocument.LoopStart, item.EditorDocument.LoopEnd);
-			}
-
-			var waveOut = new WaveOutEvent();
-			output = waveOut;
-			item.isPlaying = true;
-
-			if (item.EditorDocument.Flags.HasFlag(AudioFlags.Loop))
-			{
-				var waveProvider = new CachedLoopWaveProvider(source, item.EditorDocument.LoopStart, item.EditorDocument.LoopEnd);
-
-				waveOut.Init(waveProvider);
-			}
-			else
-			{
-				waveOut.Init(source.ToWaveProvider());
-			}
-
-			waveOut.PlaybackStopped += (_, __) =>
-			{
-				reader.Dispose();
-				waveOut.Dispose();
-
-				if (output == waveOut)
-					output = null;
-
-				item.isPlaying = false;
-				Invalidate();
-			};
-
-			waveOut.Play();
-		}
-
-		ISampleProvider ApplyTrim(ISampleProvider source, AudioEditorDocument doc, TimeSpan totalDuration)
-		{
-			double startSeconds = doc.TrimStart * totalDuration.TotalSeconds;
-			double endSeconds	= doc.TrimEnd	* totalDuration.TotalSeconds;
-
-			if (endSeconds <= startSeconds)
-				endSeconds = totalDuration.TotalSeconds;
-
-			return new OffsetSampleProvider(source)
-			{
-				SkipOver = TimeSpan.FromSeconds(startSeconds),
-				Take = TimeSpan.FromSeconds(endSeconds - startSeconds)
-			};
-		}
-
-		void StopAllSounds()
-		{
-			if (output != null)
-			{
-				output.Stop();
-				output = null;
-			}
-
-			foreach (var i in _items)
-				i.isPlaying = false;
-		}
-
-		static List<(float min, float max)> GenerateWaveform(string filePath, int resolution = 4096)
-		{
-			var result = new List<(float min, float max)>(resolution);
-
-			using var reader = new AudioFileReader(filePath);
-
-			long totalSamples =
-				reader.Length / sizeof(float) / reader.WaveFormat.Channels;
-
-			int channels = reader.WaveFormat.Channels;
-			long samplesPerPixel = totalSamples / resolution;
-
-			float[] buffer = new float[4096];
-			long samplesAccumulated = 0;
-
-			float min = 1f;
-			float max = -1f;
-
-			int read;
-			while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
-			{
-				for (int i = 0; i < read; i += channels)
-				{
-					float sample = buffer[i]; // left / mono
-
-					min = Math.Min(min, sample);
-					max = Math.Max(max, sample);
-					samplesAccumulated++;
-
-					if (samplesAccumulated >= samplesPerPixel)
-					{
-						result.Add((min, max));
-						min = 1f;
-						max = -1f;
-						samplesAccumulated = 0;
-
-						if (result.Count >= resolution)
-							return result;
-					}
-				}
-			}
-
-			// pad if short
-			while (result.Count < resolution)
-				result.Add((0, 0));
-
-			return result;
-		}
-
-		// Downsample when drawing to fit the available rect width
-		void DrawWaveform(Graphics g, Rectangle rect, List<(float min, float max)> data)
-		{
-			if (data == null || data.Count == 0)
-				return;
-
-			int midY = rect.Top + rect.Height / 2;
-			float scaleY = rect.Height / 2f;
-			int targetWidth = rect.Width;
-
-			// If the waveform data has more samples than pixels, downsample
-			if (data.Count > targetWidth)
-			{
-				float samplesPerPixel = (float) data.Count / targetWidth;
-
-				for (int x = 0; x < targetWidth; x++)
-				{
-					int startIdx = (int) (x * samplesPerPixel);
-					int endIdx = (int) ((x + 1) * samplesPerPixel);
-
-					// Find min/max across this range
-					float rangeMin = 1f;
-					float rangeMax = -1f;
-
-					for (int i = startIdx; i < endIdx && i < data.Count; i++)
-					{
-						rangeMin = Math.Min(rangeMin, data[i].min);
-						rangeMax = Math.Max(rangeMax, data[i].max);
-					}
-
-					int y1 = midY - (int) (rangeMax * scaleY);
-					int y2 = midY - (int) (rangeMin * scaleY);
-
-					g.DrawLine(Pens.LightGreen,
-						rect.Left + x,
-						y1,
-						rect.Left + x,
-						y2);
-				}
-			}
-			// If waveform data has fewer samples than pixels, stretch it
-			else
-			{
-				float pixelsPerSample = (float) targetWidth / data.Count;
-
-				for (int i = 0; i < data.Count; i++)
-				{
-					var (min, max) = data[i];
-
-					int x1 = rect.Left + (int) (i * pixelsPerSample);
-					int x2 = rect.Left + (int) ((i + 1) * pixelsPerSample);
-
-					int y1 = midY - (int) (max * scaleY);
-					int y2 = midY - (int) (min * scaleY);
-
-					// Draw a vertical bar for each sample, stretched horizontally
-					for (int x = x1; x < x2 && x < rect.Right; x++)
-					{
-						g.DrawLine(Pens.LightGreen, x, y1, x, y2);
-					}
-				}
-			}
+			base.Dispose(disposing);
 		}
 	}
 
+	// ---------------------------------------------------------------
+	// Supporting types
+	// ---------------------------------------------------------------
 	internal class SoundItem
 	{
-		public int ExpandedHeight => 140;
-		public int Collapsed => 32;
+		public int CollapsedHeight => 32;
+		public int ExpandedHeight => 160;
 
-		public string SourcePath { get; set; }
-		public string Name { get; set; }
-		public TimeSpan Duration { get; set; }
-		public int SampleRate { get; set; }
-		public int Channels { get; set; }
-		public bool isPlaying { get; set; }
-		public List<(float min, float max)> Waveform { get; set; }
+		public string Name { get; set; } = string.Empty;
+		public AudioDocument Document { get; set; } = null!;
+		public Bitmap? CachedWaveform { get; set; } = null;
+		public bool IsPlaying { get; set; }
 
-		public AudioEditorDocument EditorDocument { get; set; }
+		public void ClearCache()
+		{
+			CachedWaveform?.Dispose();
+			CachedWaveform = null;
+		}
 	}
 
-	internal enum DragMode
-	{
-		None,
-		TrimStart,
-		TrimEnd,
-		LoopStart,
-		LoopEnd
-	}
+	internal enum DragMode { None, TrimStart, TrimEnd, LoopStart, LoopEnd }
 }
