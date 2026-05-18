@@ -10,16 +10,22 @@ Development began in August 2025 as part of DoItBetter Studio’s long-term effo
 
 ## Overview
 
-Glyphborn.Echo is responsible for:
 
-- Audio playback and mixing
-- Sound effect management
-- Music streaming and looping
-- Audio channel control
-- Volume routing and balancing
-- Runtime audio state handling
+Glyphborn.Echo is the dedicated audio engine and editor for the Glyphborn ecosystem, providing deterministic, modular, and extensible audio services for games and tools. It features:
 
-Glyphborn.Echo defines how sound behaves within the engine while remaining independent of world structure, rendering, and gameplay logic.
+- Windows Forms-based audio editor UI
+- WAV file decoding (8/16-bit, mono/stereo, downmixed to signed 8-bit mono PCM)
+- Audio playback using WinMM (WinMMAudioPlayer)
+- Sound effect management with marker editing (trim, loop points)
+- Music streaming and seamless looping
+- Audio channel and bus control
+- Volume routing and balancing (via PCM data)
+- Deterministic runtime audio state (AudioDocument, AudioFlags)
+- Project save/load (.gbaud editor files)
+- Export to runtime .gbaud format
+- Version checking and update mechanism
+
+Echo is designed to operate independently of world structure, rendering, and gameplay logic, ensuring clean separation of concerns and testable audio logic.
 
 ---
 
@@ -74,13 +80,41 @@ Each component is developed independently to allow controlled iteration and long
 
 ## Project Status
 
-Glyphborn.Echo is currently in active development.
+
+**Initial Release: v1.0.0**
+
+Glyphborn.Echo has reached its first stable release, providing a robust foundation for audio playback, mixing, and runtime management. Further features and integrations are planned for future versions.
 
 The broader Glyphborn engine will eventually be rebranded and released as:
 
 **Damascus — The Steel Editor Suite**
 
-Until official release, this repository is publicly visible for transparency and portfolio purposes but is not open source.
+This repository is publicly visible for transparency and portfolio purposes but remains proprietary and not open source.
+
+---
+
+## Release Notes
+
+### v1.0.0 — Initial Release
+
+**Release Date:** 2026-06-XX
+
+**Features:**
+
+- Windows Forms-based audio editor UI (MainForm, SoundListView)
+- WAV file decoding (8/16-bit, mono/stereo, downmixed to signed 8-bit mono PCM)
+- Audio playback using WinMM (WinMMAudioPlayer)
+- Sound effect management with marker editing (trim, loop points)
+- Music streaming and seamless looping support
+- Audio channel and bus control
+- Volume routing and balancing (via PCM data, not mixer UI)
+- Deterministic runtime audio state (AudioDocument, AudioFlags)
+- Project save/load (.gbaud editor files, Serializer)
+- Export to runtime .gbaud format (GbaudExporter)
+- Version checking and update mechanism (VersionChecker)
+- Modular, testable architecture with clear separation of concerns
+
+This release establishes a robust foundation for future extensibility and integration with other Glyphborn ecosystem components.
 
 ---
 
