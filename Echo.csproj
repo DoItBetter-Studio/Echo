@@ -2,7 +2,7 @@
 
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
-		<TargetFramework>net8.0-windows</TargetFramework>
+		<TargetFramework>net10.0-windows</TargetFramework>
 		<UseWindowsForms>true</UseWindowsForms>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>disable</ImplicitUsings>
@@ -10,5 +10,19 @@
 		<RootNamespace>Echo</RootNamespace>
 		<ApplicationIcon />
 	</PropertyGroup>
+
+	<ItemGroup>
+	  <None Remove="version.txt" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <Content Include="version.txt">
+	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+	  </Content>
+	</ItemGroup>
+
+	<ItemGroup>
+	  <ProjectReference Include="..\Updater\Updater.csproj" />
+	</ItemGroup>
 
 </Project>
