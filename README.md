@@ -101,17 +101,17 @@ This repository is publicly visible for transparency and portfolio purposes but 
 
 **Features:**
 
-- Windows Forms-based audio editor UI (MainForm, SoundListView)
+- Windows Forms-based audio editor UI (`MainForm`, `SoundListView`)
 - WAV file decoding (8/16-bit, mono/stereo, downmixed to signed 8-bit mono PCM)
-- Audio playback using WinMM (WinMMAudioPlayer)
+- Audio playback using WinMM (`WinMMAudioPlayer`)
 - Sound effect management with marker editing (trim, loop points)
 - Music streaming and seamless looping support
 - Audio channel and bus control
 - Volume routing and balancing (via PCM data, not mixer UI)
-- Deterministic runtime audio state (AudioDocument, AudioFlags)
-- Project save/load (.gbaud editor files, Serializer)
-- Export to runtime .gbaud format (GbaudExporter)
-- Version checking and update mechanism (VersionChecker)
+- Deterministic runtime audio state (`AudioDocument`, `AudioFlags`)
+- Project save/load (`.gbaud` editor files, `Serializer`)
+- Export to runtime `.gbaud` format (`GbaudExporter`)
+- Version checking and update mechanism (`VersionChecker`)
 - Modular, testable architecture with clear separation of concerns
 
 This release establishes a robust foundation for future extensibility and integration with other Glyphborn ecosystem components.
