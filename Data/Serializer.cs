@@ -1,9 +1,10 @@
-﻿using System;
+﻿using Echo.Editor;
+using System;
 using System.IO;
 using System.Security.AccessControl;
 using System.Text;
 
-namespace Echo
+namespace Echo.Data
 {
 	/// <summary>
 	/// Reads and writes .gbaud editor project files to assets/audio/.

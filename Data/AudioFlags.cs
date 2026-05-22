@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace Echo
+namespace Echo.Data
 {
 	[Flags]
 	public enum AudioFlags : byte

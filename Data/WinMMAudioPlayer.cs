@@ -2,7 +2,7 @@
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace Echo;
+namespace Echo.Data;
 
 public sealed class WinMMAudioPlayer : IDisposable
 {

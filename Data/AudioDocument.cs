@@ -1,6 +1,6 @@
 ﻿using System;
 
-namespace Echo
+namespace Echo.Data
 {
 	public enum MarkerKind { TrimStart, TrimEnd, LoopStart, LoopEnd }
 

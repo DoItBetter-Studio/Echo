@@ -12,16 +12,6 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-	  <None Remove="version.txt" />
-	</ItemGroup>
-
-	<ItemGroup>
-	  <Content Include="version.txt">
-	    <CopyToOutputDirectory>Never</CopyToOutputDirectory>
-	  </Content>
-	</ItemGroup>
-
-	<ItemGroup>
 	  <ProjectReference Include="..\Updater\Updater.csproj" />
 	</ItemGroup>
 

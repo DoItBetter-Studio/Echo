@@ -1,12 +1,10 @@
-﻿using System;
+﻿using Echo.Data;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace Echo
+namespace Echo.Controls
 {
 	/// <summary>
 	/// Pure stateless renderer. Takes an AudioDocument and dimensions, returns a Bitmap.

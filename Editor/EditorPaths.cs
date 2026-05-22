@@ -1,7 +1,7 @@
 ﻿using System;
 using System.IO;
 
-namespace Echo
+namespace Echo.Editor
 {
 	public static class EditorPaths
 	{

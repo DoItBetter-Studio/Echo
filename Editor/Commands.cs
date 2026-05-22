@@ -1,7 +1,8 @@
-﻿using System;
+﻿using Echo.Data;
+using System;
 using System.IO;
 
-namespace Echo
+namespace Echo.Editor
 {
 	/// <summary>
 	/// All mutations to AudioDocument go through here.

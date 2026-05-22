@@ -2,7 +2,7 @@
 using System.IO;
 using System.Text;
 
-namespace Echo
+namespace Echo.Data
 {
 	/// <summary>
 	/// Minimal WAV decoder. Produces signed 8-bit mono PCM samples matching

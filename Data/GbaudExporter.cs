@@ -1,7 +1,7 @@
 ﻿using System;
 using System.IO;
 
-namespace Echo
+namespace Echo.Data
 {
 	/// <summary>
 	/// Writes a .gbaud file matching the GbaudHeader struct the runtime reads:
